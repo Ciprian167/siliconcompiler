@@ -1,0 +1,4 @@
+waive --rule=port-name-suffix
+waive --rule=always-comb
+waive --rule=parameter-name-style
+waive --rule=explicit-parameter-storage-type

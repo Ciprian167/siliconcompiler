@@ -1,0 +1,2 @@
+# Ports must use _i/_o/_io; active-low suffix _n (e.g. rst_ni).
++port-name-suffix
