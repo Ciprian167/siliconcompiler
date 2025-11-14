@@ -8,12 +8,13 @@ import uuid
 
 import os.path
 
-from siliconcompiler import utils
+from siliconcompiler import utils, sc_open
 from siliconcompiler.utils.curation import collect
 from siliconcompiler.utils.paths import collectiondir, jobdir
 from siliconcompiler.package import RemoteResolver
 from siliconcompiler.flowgraph import RuntimeFlowgraph
 from siliconcompiler.scheduler import SchedulerNode
+from siliconcompiler.utils.logging import SCBlankLoggerFormatter
 
 
 class SlurmSchedulerNode(SchedulerNode):
@@ -60,6 +61,8 @@ class SlurmSchedulerNode(SchedulerNode):
         Args:
             project (Project): The project object to perform pre-processing on.
         """
+        SlurmSchedulerNode.assert_slurm()
+
         if os.path.exists(collectiondir(project)):
             # nothing to do
             return
@@ -150,6 +153,14 @@ class SlurmSchedulerNode(SchedulerNode):
         # Return the first listed partition
         return sinfo['nodes'][0]['partitions'][0]
 
+    @staticmethod
+    def assert_slurm() -> None:
+        """
+        Check if slurm is installed and throw error when not installed.
+        """
+        if shutil.which('sinfo') is None:
+            raise RuntimeError('slurm is not available or installed on this machine')
+
     def run(self):
         """
         Runs the node's task as a job on a Slurm cluster.
@@ -160,9 +171,6 @@ class SlurmSchedulerNode(SchedulerNode):
         """
 
         self._init_run_logger()
-
-        if shutil.which('sinfo') is None:
-            raise RuntimeError('slurm is not available or installed on this machine')
 
         # Determine which cluster parititon to use.
         partition = self.project.get('option', 'scheduler', 'queue',
@@ -217,9 +225,12 @@ class SlurmSchedulerNode(SchedulerNode):
 
         schedule_cmd.append(script_file)
 
+        self.logger.debug(f"Executing slurm command: {shlex.join(schedule_cmd)}")
+
         # Run the 'srun' command, and track its output.
         # TODO: output should be fed to log, and stdout if quiet = False
         step_result = subprocess.Popen(schedule_cmd,
+                                       stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT)
 
@@ -227,3 +238,26 @@ class SlurmSchedulerNode(SchedulerNode):
         # as it has closed its output stream. But if we don't call '.wait()',
         # the '.returncode' value will not be set correctly.
         step_result.wait()
+
+        # Attempt to list dir to trigger network FS to update
+        try:
+            os.listdir(os.path.dirname(log_file))
+        except:  # noqa E722
+            pass
+
+        # Print the log to logger
+        if os.path.exists(log_file):
+            org_formatter = self.project._logger_console.formatter
+            try:
+                self.project._logger_console.setFormatter(SCBlankLoggerFormatter())
+                with sc_open(log_file) as log:
+                    for line in log.readlines():
+                        self.logger.info(line.rstrip())
+            finally:
+                self.project._logger_console.setFormatter(org_formatter)
+
+        if step_result.returncode != 0:
+            self.logger.error(f"Slurm exited with a non-zero code ({step_result.returncode}).")
+            if os.path.exists(log_file):
+                self.logger.error(f"Node log file: {log_file}")
+            self.halt()
