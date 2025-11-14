@@ -9,6 +9,8 @@ from unittest.mock import patch
 from siliconcompiler import Project, Design, Flowgraph, Task
 from siliconcompiler.utils.curation import collect, archive
 from siliconcompiler.utils.paths import collectiondir
+from siliconcompiler.tools.verible import lint
+
 
 
 class FauxTask0(Task):
@@ -296,6 +298,37 @@ def test_collect_file_whitelist_pass():
     collect(proj, whitelist=[os.path.abspath('test')])
 
     assert len(os.listdir(collectiondir(proj))) == 1
+
+def test_collect_file_tools_with_additional_files(gcd_design, scroot):
+    os.makedirs('test/testing', exist_ok=True)
+
+    proj = Project(gcd_design)
+    proj.add_fileset("rtl")
+
+    flow = Flowgraph("testflow")
+    flow.node("lint", lint.VeribleLintTask())
+    proj.set_flow(flow)
+
+    lint.VeribleLintTask().find_task(proj).set(
+        "var",
+        "waivers",
+        [os.path.join(scroot, "tests/data/verible/waivers.txt")],
+    )
+
+    lint.VeribleLintTask().find_task(proj).set(
+        "var",
+        "rules",
+        [os.path.join(scroot, "tests/data/verible/rules.txt")],
+    )
+
+    lint.VeribleLintTask().find_task(proj).set("var", "waivers", True, field='copy')
+    lint.VeribleLintTask().find_task(proj).set("var", "rules", True, field='copy')
+
+    collect(proj)
+
+    assert len(os.listdir(collectiondir(proj))) == 4
+
+
 
 
 @pytest.mark.parametrize("arg", [None, Design(), "string"])
